@@ -1,5 +1,8 @@
 name: Publicar vista previa web
 
+# Publica la carpeta www/ como página web en GitHub Pages.
+# Se ejecuta sola cada vez que cambia la app en la rama main (o a mano con "Run workflow").
+# Primero hay que activar Pages: Settings -> Pages -> Source: "GitHub Actions".
 on:
   push:
     branches: [main]
@@ -26,10 +29,12 @@ jobs:
     steps:
       - name: Descargar el código
         uses: actions/checkout@v4
+
       - name: Preparar la carpeta www
         uses: actions/upload-pages-artifact@v4
         with:
           path: www
+
       - name: Publicar en GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
