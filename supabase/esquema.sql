@@ -5,7 +5,7 @@
 --  Es seguro ejecutarlo más de una vez.
 --
 --  Idea de seguridad (explicable en la escuela):
---   · Las 3 tablas están BLOQUEADAS: la app no puede leerlas ni escribirlas directamente.
+--   · Las 4 tablas están BLOQUEADAS: la app no puede leerlas ni escribirlas directamente.
 --   · La app solo puede llamar a unas funciones (adulto_* y familiar_*), y cada función
 --     pide un secreto:
 --        - el ADULTO usa su "llave" (un UUID que solo vive en su teléfono),
@@ -54,14 +54,35 @@ create table if not exists public.alertas (
 create unique index if not exists alertas_una_activa on public.alertas (familia_id) where cerrada is null;
 create index if not exists alertas_familia_idx on public.alertas (familia_id, creada desc);
 
+-- Mensajes del chat familiar: texto y notas de voz (el audio va como texto base64, máx. 1 minuto)
+create table if not exists public.mensajes (
+  seq        bigint generated always as identity,         -- orden de llegada
+  id         uuid primary key default gen_random_uuid(),
+  familia_id uuid not null references public.familias(id) on delete cascade,
+  autor      text not null,                               -- 'adulto' o el id del familiar
+  nombre     text not null check (char_length(nombre) between 1 and 60),
+  tipo       text not null check (tipo in ('texto', 'voz')),
+  texto      text check (char_length(texto) <= 1000),
+  audio      text check (char_length(audio) <= 400000),
+  mime       text,
+  duracion   int check (duracion between 1 and 60),
+  creada     timestamptz not null default now(),
+  check ((tipo = 'texto' and texto is not null and audio is null)
+      or (tipo = 'voz'   and audio is not null and texto is null))
+);
+create unique index if not exists mensajes_seq_idx on public.mensajes (seq);
+create index if not exists mensajes_familia_idx on public.mensajes (familia_id, seq desc);
+
 -- ─── 2. Candado: nadie toca las tablas directamente ────────────────
 alter table public.familias enable row level security;
 alter table public.miembros enable row level security;
 alter table public.alertas  enable row level security;
+alter table public.mensajes enable row level security;
 -- (sin políticas = nadie con la clave pública puede leer ni escribir)
 revoke all on public.familias from anon, authenticated;
 revoke all on public.miembros from anon, authenticated;
 revoke all on public.alertas  from anon, authenticated;
+revoke all on public.mensajes from anon, authenticated;
 
 -- ─── 3. Funciones auxiliares (internas, la app no puede llamarlas) ──
 
@@ -119,6 +140,79 @@ begin
   select id into v_id from public.familias where llave = p_llave;
   if v_id is null then raise exception 'llave_invalida'; end if;
   return v_id;
+end;
+$$;
+
+-- Resuelve el token de un familiar AUTORIZADO → su fila (o error)
+create or replace function public._miembro_autorizado(p_token uuid)
+returns public.miembros language plpgsql stable set search_path = public as $$
+declare v_m public.miembros;
+begin
+  select * into v_m from public.miembros where token = p_token;
+  if not found then raise exception 'token_invalido'; end if;
+  if not v_m.autorizado then raise exception 'sin_permiso'; end if;
+  return v_m;
+end;
+$$;
+
+-- Chat: mensajes con número mayor a p_desde (sin el audio, que se pide aparte). Máximo 60.
+create or replace function public._chat_leer(p_fam uuid, p_desde bigint)
+returns jsonb language sql stable set search_path = public as $$
+  select jsonb_build_object(
+    'ahora', now(),
+    'mensajes', coalesce((
+      select jsonb_agg(jsonb_build_object('seq', t.seq, 'id', t.id, 'autor', t.autor, 'nombre', t.nombre,
+                                          'tipo', t.tipo, 'texto', t.texto, 'dur', t.duracion, 'creada', t.creada)
+                       order by t.seq)
+      from (select * from public.mensajes
+            where familia_id = p_fam and seq > coalesce(p_desde, 0)
+            order by seq desc limit 60) t), '[]'::jsonb));
+$$;
+
+-- Chat: valida y guarda un mensaje (texto o voz) y limpia los más viejos
+create or replace function public._chat_enviar(
+  p_fam uuid, p_autor text, p_nombre text, p_tipo text, p_texto text, p_audio text, p_mime text, p_dur int)
+returns jsonb language plpgsql set search_path = public as $$
+declare v_texto text; v_dur int; v_row public.mensajes; v_corte bigint;
+begin
+  if p_tipo = 'texto' then
+    v_texto := left(trim(coalesce(p_texto, '')), 1000);
+    if v_texto = '' then raise exception 'mensaje_vacio'; end if;
+  elsif p_tipo = 'voz' then
+    if p_audio is null or p_audio = '' then raise exception 'mensaje_vacio'; end if;
+    if char_length(p_audio) > 400000 then raise exception 'audio_grande'; end if;
+    -- el audio debe ser base64 puro y el tipo, uno de audio conocido (nunca código)
+    if p_audio !~ '^[A-Za-z0-9+/]+=*$' or coalesce(p_mime, '') !~ '^audio/(webm|ogg|mp4|mpeg|aac|wav|x-m4a)$' then
+      raise exception 'audio_invalido';
+    end if;
+    v_dur := least(greatest(coalesce(p_dur, 1), 1), 60);
+  else
+    raise exception 'mensaje_invalido';
+  end if;
+  -- freno contra abusos: máximo 30 mensajes por minuto en cada familia
+  if (select count(*) from public.mensajes where familia_id = p_fam and creada > now() - interval '1 minute') >= 30 then
+    raise exception 'demasiados_mensajes';
+  end if;
+  insert into public.mensajes (familia_id, autor, nombre, tipo, texto, audio, mime, duracion)
+  values (p_fam, p_autor, left(coalesce(nullif(trim(p_nombre), ''), 'Familia'), 60), p_tipo, v_texto,
+          case when p_tipo = 'voz' then p_audio end, case when p_tipo = 'voz' then p_mime end, v_dur)
+  returning * into v_row;
+  -- limpieza: solo se conservan los últimos 200 mensajes y nada de más de 30 días
+  select seq into v_corte from public.mensajes where familia_id = p_fam order by seq desc offset 199 limit 1;
+  delete from public.mensajes
+   where familia_id = p_fam and (creada < now() - interval '30 days' or seq < coalesce(v_corte, 0));
+  return jsonb_build_object('id', v_row.id, 'seq', v_row.seq, 'creada', v_row.creada);
+end;
+$$;
+
+-- Chat: el audio de UN mensaje de voz
+create or replace function public._chat_audio(p_fam uuid, p_id uuid)
+returns jsonb language plpgsql stable set search_path = public as $$
+declare v_m public.mensajes;
+begin
+  select * into v_m from public.mensajes where id = p_id and familia_id = p_fam and tipo = 'voz';
+  if not found then raise exception 'mensaje_no_existe'; end if;
+  return jsonb_build_object('audio', v_m.audio, 'mime', v_m.mime);
 end;
 $$;
 
@@ -259,8 +353,34 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare v_id uuid;
 begin
   v_id := public._familia_de_llave(p_llave);
-  delete from public.familias where id = v_id;   -- miembros y alertas se borran en cascada
+  delete from public.familias where id = v_id;   -- miembros, alertas y mensajes se borran en cascada
   return jsonb_build_object('ok', true);
+end;
+$$;
+
+-- Chat del adulto: leer, enviar y pedir el audio de un mensaje de voz
+create or replace function public.adulto_chat_leer(p_llave uuid, p_desde bigint default 0)
+returns jsonb language plpgsql security definer set search_path = public as $$
+begin
+  return public._chat_leer(public._familia_de_llave(p_llave), p_desde);
+end;
+$$;
+
+create or replace function public.adulto_chat_enviar(
+  p_llave uuid, p_tipo text, p_texto text default null, p_audio text default null, p_mime text default null, p_dur int default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_id uuid; v_nombre text;
+begin
+  v_id := public._familia_de_llave(p_llave);
+  select adulto_nombre into v_nombre from public.familias where id = v_id;
+  return public._chat_enviar(v_id, 'adulto', coalesce(nullif(v_nombre, ''), 'Tu familiar'), p_tipo, p_texto, p_audio, p_mime, p_dur);
+end;
+$$;
+
+create or replace function public.adulto_chat_audio(p_llave uuid, p_id uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+begin
+  return public._chat_audio(public._familia_de_llave(p_llave), p_id);
 end;
 $$;
 
@@ -343,11 +463,44 @@ begin
 end;
 $$;
 
+-- Chat del familiar (solo si el adulto ya lo autorizó): leer, enviar y pedir el audio
+create or replace function public.familiar_chat_leer(p_token uuid, p_desde bigint default 0)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_m public.miembros;
+begin
+  v_m := public._miembro_autorizado(p_token);
+  return public._chat_leer(v_m.familia_id, p_desde);
+end;
+$$;
+
+create or replace function public.familiar_chat_enviar(
+  p_token uuid, p_tipo text, p_texto text default null, p_audio text default null, p_mime text default null, p_dur int default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_m public.miembros;
+begin
+  v_m := public._miembro_autorizado(p_token);
+  return public._chat_enviar(v_m.familia_id, v_m.id::text, v_m.nombre, p_tipo, p_texto, p_audio, p_mime, p_dur);
+end;
+$$;
+
+create or replace function public.familiar_chat_audio(p_token uuid, p_id uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_m public.miembros;
+begin
+  v_m := public._miembro_autorizado(p_token);
+  return public._chat_audio(v_m.familia_id, p_id);
+end;
+$$;
+
 -- ─── 6. Permisos: la app solo puede llamar a las funciones públicas ─
 revoke all on function public._norm_codigo(text)                  from public, anon, authenticated;
 revoke all on function public._codigo_nuevo()                     from public, anon, authenticated;
 revoke all on function public._ubicacion_ok(jsonb)                from public, anon, authenticated;
 revoke all on function public._familia_de_llave(uuid)             from public, anon, authenticated;
+revoke all on function public._miembro_autorizado(uuid)           from public, anon, authenticated;
+revoke all on function public._chat_leer(uuid, bigint)            from public, anon, authenticated;
+revoke all on function public._chat_enviar(uuid, text, text, text, text, text, text, int) from public, anon, authenticated;
+revoke all on function public._chat_audio(uuid, uuid)             from public, anon, authenticated;
 
 do $$
 declare f text;
@@ -362,10 +515,16 @@ begin
     'adulto_alerta_ubicacion(uuid,uuid,jsonb)',
     'adulto_cerrar_alerta(uuid,uuid)',
     'adulto_borrar_familia(uuid)',
+    'adulto_chat_leer(uuid,bigint)',
+    'adulto_chat_enviar(uuid,text,text,text,text,int)',
+    'adulto_chat_audio(uuid,uuid)',
     'unirse(text,text,text)',
     'familiar_leer(uuid)',
     'familiar_atender_alerta(uuid,uuid)',
-    'familiar_salir(uuid)']
+    'familiar_salir(uuid)',
+    'familiar_chat_leer(uuid,bigint)',
+    'familiar_chat_enviar(uuid,text,text,text,text,int)',
+    'familiar_chat_audio(uuid,uuid)']
   loop
     execute format('revoke all on function public.%s from public', f);
     execute format('grant execute on function public.%s to anon, authenticated', f);

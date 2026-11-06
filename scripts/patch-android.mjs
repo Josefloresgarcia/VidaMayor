@@ -1,5 +1,5 @@
 // Ajusta el proyecto Android que crea `cap add android`:
-//  1) permisos que necesita VidaMayor (avisos, alarmas exactas, ubicación)
+//  1) permisos que necesita VidaMayor (avisos, alarmas exactas, ubicación, micrófono)
 //  2) pantalla siempre vertical
 //  3) ícono blanco para las notificaciones (ic_stat_vidamayor)
 // Es seguro ejecutarlo más de una vez.
@@ -27,6 +27,8 @@ const permisos = [
   'android.permission.VIBRATE',
   'android.permission.ACCESS_COARSE_LOCATION',
   'android.permission.ACCESS_FINE_LOCATION',
+  'android.permission.RECORD_AUDIO',          // notas de voz del chat
+  'android.permission.MODIFY_AUDIO_SETTINGS',
 ];
 
 const faltan = permisos.filter((p) => !xml.includes(`"${p}"`));
@@ -34,6 +36,12 @@ if (faltan.length) {
   const lineas = faltan.map((p) => `    <uses-permission android:name="${p}" />`).join('\n');
   xml = xml.replace('</manifest>', `\n    <!-- VidaMayor -->\n${lineas}\n</manifest>`);
   console.log('Permisos agregados:', faltan.length);
+}
+
+// El micrófono no es obligatorio: así la app también se instala en teléfonos sin micrófono
+if (!xml.includes('android.hardware.microphone')) {
+  xml = xml.replace('</manifest>', '\n    <uses-feature android:name="android.hardware.microphone" android:required="false" />\n</manifest>');
+  console.log('Micrófono declarado como opcional');
 }
 
 if (!/android:screenOrientation=/.test(xml)) {

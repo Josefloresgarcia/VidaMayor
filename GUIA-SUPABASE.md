@@ -1,7 +1,7 @@
 # Guía: activar "Familia conectada" con Supabase
 
 Con esto, el celular de la persona mayor y el de su familiar se hablan de verdad:
-el familiar ve las medicinas, citas, ubicación y **recibe la alerta de emergencia** en su propio teléfono.
+el familiar ve las medicinas, citas, ubicación, **recibe la alerta de emergencia** y pueden **escribirse mensajes de texto y mandarse notas de voz** desde la misma app.
 
 Tiempo: unos 15 minutos. Costo: **$0** (plan gratuito de Supabase).
 
@@ -24,7 +24,9 @@ Tiempo: unos 15 minutos. Costo: **$0** (plan gratuito de Supabase).
 1. En el menú de la izquierda abre **SQL Editor** → **New query**.
 2. Abre el archivo `supabase/esquema.sql` de este proyecto en GitHub, copia **todo** su contenido y pégalo en el editor.
 3. Pulsa **Run**. Debe decir **Success. No rows returned**.
-4. Para comprobarlo, abre **Table Editor**: deben aparecer `familias`, `miembros` y `alertas`.
+4. Para comprobarlo, abre **Table Editor**: deben aparecer `familias`, `miembros`, `alertas` y `mensajes`.
+
+> **¿Ya habías pegado el script antes de que existiera el chat?** Vuelve a pegarlo completo y pulsa **Run**: es seguro repetirlo, no borra nada y solo agrega la parte de los mensajes. Hasta que lo hagas, la app mostrará *"falta actualizar la base de datos"* al abrir **Mensajes**.
 
 > Si Supabase muestra un aviso amarillo tipo *"RLS enabled, no policies"*, **es lo esperado**: las tablas quedan cerradas a propósito y la app solo puede usar las funciones del script.
 
@@ -62,6 +64,9 @@ Tiempo: unos 15 minutos. Costo: **$0** (plan gratuito de Supabase).
 | Confirma una medicina con **Ya lo tomé**. | Ve la medicina *Confirmada* sin hacer nada. |
 | **Emergencia → pedir ayuda**. | Le llega *"¡Emergencia! María pidió ayuda"* con botones **Llamar** y **Ver dónde está**. Pulsa **Ya la vi**. |
 | Ve **"Carlos ya vio tu alerta"**. | |
+| Abre **Inicio → Mensajes**, escribe *"Hola hijo"* y pulsa enviar. | Ve el globito **1 mensaje nuevo** en su panel. Abre **Mensajes** y lo lee. |
+| | Toca el **micrófono**, habla unos segundos y pulsa **Enviar** (la primera vez Android pide permiso para el micrófono: **Permitir**). |
+| Le llega la nota de voz. Toca **▶** para escucharla. | |
 
 Si lo pruebas con **un solo teléfono**, puedes usar un navegador en la computadora como segundo teléfono.
 
@@ -81,6 +86,7 @@ Si lo pruebas con **un solo teléfono**, puedes usar un navegador en la computad
 | `familias` | Una fila por persona: código, su resumen del día (medicinas y citas), privacidad y última ubicación |
 | `miembros` | Los familiares que pidieron conectarse y si están autorizados |
 | `alertas` | Las emergencias (y quién ya las vio). Solo puede haber una activa por familia |
+| `mensajes` | El chat de la familia: textos y notas de voz (el audio se guarda como texto base64, máximo 60 s) |
 
 **Seguridad**
 - Las tablas están **bloqueadas** (RLS): la app no puede leerlas ni escribirlas directamente.
@@ -89,13 +95,15 @@ Si lo pruebas con **un solo teléfono**, puedes usar un navegador en la computad
 - El **código de 8 letras** solo sirve para *pedir* unirse: la persona debe autorizar.
 - La **privacidad se aplica en el servidor**: si María desactiva "Mis medicinas", Carlos ya no las recibe, aunque modifique la app.
 - Si María deja de compartir su ubicación, esta **se borra de la nube**.
-- Puede quitar a un familiar o **desconectar y borrar todo** desde Mi perfil.
+- **Solo quien está autorizado puede leer o escribir en el chat.** Un familiar pendiente, rechazado o quitado no puede leer ni mandar mensajes, y el chat de una familia nunca se mezcla con el de otra.
+- Puede quitar a un familiar o **desconectar y borrar todo** desde Mi perfil: eso también borra los mensajes de la nube.
 
 ---
 
 ## Límites (conviene decirlos con honestidad en la presentación)
 
 - **Avisos con la app cerrada:** el familiar recibe la alerta mientras su app está abierta o recién usada. Para avisarle con la app totalmente cerrada hace falta *push* (Firebase Cloud Messaging): es la siguiente fase.
+- **Chat:** es **un solo chat compartido** por la persona y todos sus familiares autorizados (no hay chats privados entre dos). Se actualiza cada ~6 s con el chat abierto y cada ~18 s con la app abierta en otra pantalla; **no hay avisos con la app cerrada** (también requiere push). Se conservan los últimos 200 mensajes y nada de más de 30 días, para no llenar el plan gratuito. Los mensajes **no van cifrados de punta a punta** (están en tu proyecto de Supabase); no son para datos muy delicados.
 - **Plan gratuito:** Supabase **pausa** los proyectos gratuitos con poca actividad durante 7 días (te avisa por correo antes). Si la app dice que no se puede conectar, entra a supabase.com, abre tu proyecto y pulsa **Resume project**: vuelve igual que estaba, con sus datos. Úsala al menos una vez por semana para que no se pause.
 - **Es un proyecto escolar:** no hay cuentas con correo ni límites contra abusos. Antes de publicarla de verdad harían falta cuentas (Supabase Auth), un aviso de privacidad y consentimiento, porque son datos de salud.
 - **Sin internet:** la app sigue funcionando en el teléfono. Si se pide ayuda sin internet, la alerta espera y se envía sola al volver la conexión.
@@ -108,4 +116,6 @@ Si lo pruebas con **un solo teléfono**, puedes usar un navegador en la computad
 | *"La clave de la nube no es correcta"* | Copiaste mal la clave o usaste la `secret`. Usa la *Publishable* o *anon public* (paso 3). |
 | *"Ese código no existe"* | El código cambió o tiene un error. Pídelo de nuevo (Mi perfil → Familia conectada). |
 | *"No hay conexión con internet"* | Revisa el internet del teléfono. Si sí hay, el proyecto puede estar pausado (ver arriba). |
+| *"Los mensajes aún no están activados en la nube: falta actualizar la base de datos"* | El script del paso 2 es de una versión anterior. Pégalo completo otra vez y pulsa **Run**. |
+| *"Para grabar necesitas permitir el micrófono…"* | En el teléfono: Ajustes → Apps → VidaMayor → Permisos → **Micrófono → Permitir**. |
 | *"No se pudo conectar con la nube"* | Casi siempre es que el script del paso 2 no se ejecutó completo. Vuelve a pegarlo y pulsa **Run** (es seguro repetirlo). |

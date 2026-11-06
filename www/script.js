@@ -78,6 +78,10 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/>',
   heart: '<path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>',
   map: '<path d="M9 4 3 6.5v14L9 18l6 2.5 6-2.5v-14L15 6.5 9 4z"/><path d="M9 4v14M15 6.5v14"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',
+  send: '<path d="M21 3 10 14M21 3l-7 18-4-7-7-4 18-7z"/>',
+  play: '<path d="M8 5.5v13l11-6.5-11-6.5z"/>',
+  pause: '<path d="M8.5 5v14M15.5 5v14" stroke-width="3.2"/>',
 };
 const I = (name, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name] || ''}</svg>`;
 const LOGO = '<img class="logo-img" src="logo.png" alt="">';
@@ -107,7 +111,7 @@ function defaults() {
     family: [],     // contactos de emergencia: { id, name, relation, phone, photo }
     location: null, // { lat, lng, acc, at }
     alerts: [],     // { id, at, loc, resolvedAt, cloud, locSent, closedSent }
-    nube: { rol: '', codigo: '', llave: '', token: '', miembro: '', adulto: '', nombre: '', ultimaAlerta: '' }, // rol: 'adulto' | 'familiar'
+    nube: { rol: '', codigo: '', llave: '', token: '', miembro: '', adulto: '', nombre: '', ultimaAlerta: '', chatVisto: 0 }, // rol: 'adulto' | 'familiar'
   };
 }
 function merge(base, saved) {
@@ -327,7 +331,7 @@ function topbar({ back = false, title = '', actions = true } = {}) {
 const TABS = [['inicio', 'Inicio', 'home'], ['agenda', 'Agenda', 'calendar'], ['medicinas', 'Medicinas', 'pill'], ['familia', 'Familia', 'users'], ['emergencia', 'SOS', 'alert']];
 function renderTabbar() {
   $('#tabbar').innerHTML = TABS.map(([v, label, ic]) =>
-    `<button class="tab ${v === 'emergencia' ? 'sos' : ''}" data-act="go" data-view="${v}" ${ui.view === v ? 'aria-current="page"' : ''}><span class="pill">${I(ic)}</span>${label}</button>`).join('');
+    `<button class="tab ${v === 'emergencia' ? 'sos' : ''}" data-act="go" data-view="${v}" ${ui.view === v ? 'aria-current="page"' : ''}><span class="pill">${I(ic)}${v === 'familia' && chatDisponible() ? `<span class="badge chat-badge" ${chatSinLeer() ? '' : 'hidden'}>${chatSinLeer()}</span>` : ''}</span>${label}</button>`).join('');
 }
 
 const fld = (label, name, value, { type = 'text', ph = '', req = false, ac = 'off' } = {}) =>
@@ -468,10 +472,11 @@ const esFamiliar = () => state.nube.rol === 'familiar' && !!state.nube.token;
 const fmtCodigo = (c) => (c && c.length === 8 ? `${c.slice(0, 4)}-${c.slice(4)}` : c || '');
 ui.nube = { miembros: [], alertas: [], at: 0, err: '', avisados: new Set() };   // lo que sabe el adulto
 ui.remoto = { data: null, at: 0, err: '' };                                       // lo que ve el familiar
+ui.chat = chatNuevo();                                                            // mensajes (ver 7c)
 
 /** Redibuja sin molestar si la persona está escribiendo o hay una hoja abierta */
 function softRender() {
-  if (sheet.open || $('#app').hidden) return;
+  if (sheet.open || $('#app').hidden || ui.view === 'chat') return;
   const a = document.activeElement;
   if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
   render(true);
@@ -526,7 +531,7 @@ async function nubeSync() {
   } catch (e) {
     ui.nube.err = NUBE.errMsg(e);
     if (e && e.code === 'llave_invalida') {
-      state.nube = defaults().nube; persist(); ui.nube.miembros = []; ui.nube.alertas = [];
+      state.nube = defaults().nube; persist(); ui.nube.miembros = []; ui.nube.alertas = []; chatReset();
       toast('La conexión con tu familia se cerró.', 'err');
     }
     if (['perfil', 'emergencia'].includes(ui.view)) softRender();
@@ -543,6 +548,7 @@ function nubeAplicar(r) {
     if (!m.autorizado && !ui.nube.avisados.has(m.id)) { ui.nube.avisados.add(m.id); toast(`${m.nombre} quiere conectarse. Autorízalo en Mi perfil.`); }
   }
   if (antes !== JSON.stringify([ui.nube.miembros, ui.nube.alertas, ui.nube.err]) && ['perfil', 'emergencia'].includes(ui.view)) softRender();
+  chatTrasSync();
 }
 
 let leerBusy = false;
@@ -559,6 +565,7 @@ async function nubeLeer() {
       state.nube.ultimaAlerta = act.id; persist();
       avisarEmergencia(d.adulto, act);
     }
+    chatTrasSync();
   } catch (e) {
     if (e && e.code === 'token_invalido') { limpiarTodo(`Ya no estás conectado con ${state.nube.adulto || 'tu familiar'}.`); return; }
     ui.remoto.err = NUBE.errMsg(e);
@@ -590,6 +597,7 @@ function nubeTick() {
   nubeTicks++;
   if (esFamiliar()) nubeLeer();
   else if (esAdulto() && (nubeTicks % 2 === 0 || activeAlert())) nubeSync();
+  chatTick();
 }
 function nubeKick() {
   if (!nubeOn()) return;
@@ -602,7 +610,7 @@ async function crearFamilia() {
   try {
     const r = await NUBE.rpc('crear_familia', { p_nombre: state.profile.name || '' });
     state.nube = { ...defaults().nube, rol: 'adulto', codigo: r.codigo, llave: r.llave };
-    persist();
+    persist(); chatReset();
     await nubeSync();
     render(true);
     toast('Listo. Comparte el código con tu familia.', 'ok');
@@ -625,7 +633,7 @@ function joinSheet() {
       try {
         const r = await NUBE.rpc('unirse', { p_codigo: codigo, p_nombre: nombre, p_relacion: String(fd.get('relacion') || '').trim() });
         state.nube = { ...defaults().nube, rol: 'familiar', token: r.token, miembro: r.miembro, adulto: r.adulto || '', nombre };
-        state.onboarded = true; state.loggedOut = false; persist();
+        state.onboarded = true; state.loggedOut = false; persist(); chatReset();
         ui.remoto = { data: null, at: 0, err: '' };
         sheet._after = () => { ui.view = 'inicio'; showApp(); enableNotifications(false).catch(() => {}); };
       } catch (e) { return { error: NUBE.errMsg(e) }; }
@@ -640,12 +648,412 @@ function limpiarTodo(aviso = '') {
   state = defaults();
   document.documentElement.dataset.size = 'normal';
   ui.view = 'inicio'; ui.mode = 'adulto';
-  ui.nube.miembros = []; ui.nube.alertas = []; ui.nube.err = ''; ui.remoto = { data: null, at: 0, err: '' };
+  ui.nube.miembros = []; ui.nube.alertas = []; ui.nube.err = ''; ui.remoto = { data: null, at: 0, err: '' }; chatReset();
   scheduleReminders();
   showWelcome();
   if (aviso) toast(aviso);
 }
 
+/* ═══════════════════════════════════════════════════════════
+   7c. Mensajes (chat familiar): texto y notas de voz
+   Todo el chat pasa por las funciones adulto_chat_* / familiar_chat_* de supabase/esquema.sql.
+   La nota de voz se graba con el micrófono del teléfono (MediaRecorder), dura hasta 1 minuto y se
+   manda como texto base64. El otro teléfono pide el audio solo cuando hace falta.
+   ═══════════════════════════════════════════════════════════ */
+const REC_MAX = 60;   // segundos
+const fmtSecs = (s) => `${Math.floor(s / 60)}:${pad(Math.floor(s % 60))}`;
+function chatNuevo() {
+  return {
+    msgs: [], ultimo: 0, loaded: false, err: '', off: false, draft: '', busy: false, stick: false,
+    rec: 'idle', recStart: 0, recSecs: 0, pending: null,   // grabación: idle | rec | sending | ready
+    audio: {}, bajando: '', playing: '', playPct: 0,
+  };
+}
+const chatMio = (m) => (esAdulto() ? m.autor === 'adulto' : m.autor === state.nube.miembro);
+const chatSinLeer = () => ui.chat.msgs.filter((m) => m.seq > (state.nube.chatVisto || 0) && !chatMio(m)).length;
+/** ¿Hay con quién chatear? (el adulto, con al menos un familiar autorizado; el familiar, ya autorizado) */
+const chatDisponible = () => nubeOn() && (esAdulto()
+  ? ui.nube.miembros.some((m) => m.autorizado) || ui.chat.msgs.length > 0
+  : esFamiliar() && !!(ui.remoto.data && ui.remoto.data.autorizado));
+function chatRpc(fn, args = {}, opts) {
+  const quien = esAdulto() ? { p_llave: state.nube.llave } : { p_token: state.nube.token };
+  return NUBE.rpc(`${esAdulto() ? 'adulto' : 'familiar'}_chat_${fn}`, { ...quien, ...args }, opts);
+}
+function chatReset() { chatParar(); ui.chat = chatNuevo(); ui.chatDisp = undefined; }
+
+/* ── Leer mensajes ── */
+let chatBusy = false, chatAgain = false;
+async function chatPoll({ force = false } = {}) {
+  const C = ui.chat;
+  if (!nubeOn() || !(esAdulto() || esFamiliar())) return;
+  if (!force && (C.off || !chatDisponible())) return;
+  if (chatBusy) { chatAgain = true; return; }
+  chatBusy = true;
+  try {
+    const r = await chatRpc('leer', { p_desde: C.ultimo });
+    if (C !== ui.chat) return;   // mientras tanto se desconectó o cambió de familia
+    const primera = !C.loaded;
+    C.loaded = true; C.err = ''; C.off = false;
+    chatAplicar(r.mensajes || [], primera);
+  } catch (e) {
+    if (C !== ui.chat) return;
+    if (e && e.code === 'funcion_falta') { C.off = true; C.err = NUBE.errMsg(e); }
+    else if (e && ['sin_permiso', 'token_invalido', 'llave_invalida'].includes(e.code)) C.err = '';   // lo atiende la sincronización principal
+    else C.err = NUBE.errMsg(e);
+    if (ui.view === 'chat') chatDrawList();
+  } finally {
+    chatBusy = false;
+    if (chatAgain) { chatAgain = false; chatPoll({ force: true }); }
+  }
+}
+function chatAplicar(lista, primera) {
+  const C = ui.chat;
+  const tengo = new Set(C.msgs.map((m) => m.seq));
+  const frescos = lista.filter((m) => m && Number.isFinite(m.seq) && !tengo.has(m.seq));
+  if (frescos.length) {
+    C.msgs = [...C.msgs, ...frescos].sort((a, b) => a.seq - b.seq).slice(-200);
+    C.ultimo = Math.max(C.ultimo, ...frescos.map((m) => m.seq));
+  }
+  const abierto = ui.view === 'chat' && !document.hidden && !$('#app').hidden;
+  const entrantes = frescos.filter((m) => !chatMio(m) && m.seq > (state.nube.chatVisto || 0));
+  if (abierto) {
+    chatMarcarVisto();
+    if (frescos.length || primera) chatDrawList();
+    chatPrefetch();
+  } else {
+    chatBadges();
+    if (entrantes.length && !primera) avisarMensaje(entrantes);
+  }
+}
+/** Tras cada sincronización: ¿ya hay con quién chatear? ¿falta la primera lectura? */
+function chatTrasSync() {
+  const d = chatDisponible();
+  if (d && !ui.chat.loaded && !ui.chat.off) chatPoll();
+  if (d !== ui.chatDisp) { ui.chatDisp = d; softRender(); }
+}
+function chatTick() {
+  if (!chatDisponible() || ui.chat.off) return;
+  // con el chat abierto se revisa cada ciclo (~6 s); fuera de él, cada tercer ciclo (~18 s)
+  if (ui.view === 'chat' || nubeTicks % 3 === 0) chatPoll();
+}
+function chatMarcarVisto() {
+  const C = ui.chat;
+  if (C.ultimo > (state.nube.chatVisto || 0)) { state.nube.chatVisto = C.ultimo; persist(); }
+  chatBadges();
+}
+function chatEntrySub(n) { return n ? `${n} ${n === 1 ? 'mensaje nuevo' : 'mensajes nuevos'}` : 'Escribe o envía una nota de voz'; }
+/** Pone al día los globitos con el número de mensajes sin leer */
+function chatBadges() {
+  const n = chatSinLeer();
+  document.querySelectorAll('.chat-badge').forEach((b) => { b.textContent = String(n); b.hidden = !n; });
+  document.querySelectorAll('.chat-entry-sub').forEach((s) => { s.textContent = chatEntrySub(n); });
+  if (!$('#app').hidden && !$('#tabbar').hidden) renderTabbar();
+}
+async function avisarMensaje(nuevos) {
+  const m = nuevos[nuevos.length - 1], quien = firstName(m.nombre) || 'Tu familia';
+  const cuerpo = nuevos.length > 1 ? `${nuevos.length} mensajes nuevos`
+    : m.tipo === 'voz' ? 'Te envió una nota de voz' : (m.texto.length > 80 ? `${m.texto.slice(0, 77)}…` : m.texto);
+  toast(`${quien}: ${cuerpo}`);
+  try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) { /* sin vibración */ }
+  const LN = plug('LocalNotifications');
+  if (isNative && LN) {
+    try {
+      const st = await LN.checkPermissions();
+      if (st.display === 'granted') {
+        await LN.schedule({ notifications: [{ id: hash('msg|' + m.id) & 0x7fffffff, title: `Mensaje de ${quien}`, body: cuerpo, channelId: CHANNEL, smallIcon: 'ic_stat_vidamayor' }] });
+      }
+    } catch (e) { console.warn('Aviso de mensaje:', e); }
+  } else if ('Notification' in window && Notification.permission === 'granted') {
+    try { new Notification(`Mensaje de ${quien}`, { body: cuerpo }); } catch (e) { /* ignorar */ }
+  }
+}
+
+/* ── Audio: pedirlo, guardarlo y reproducirlo ── */
+let audioEl = null, prefetching = false;
+function chatGuardarAudio(id, src) {
+  const A = ui.chat.audio;
+  A[id] = src;
+  const ids = Object.keys(A);
+  while (ids.length > 12) delete A[ids.shift()];   // no se guardan más de 12 audios en memoria
+}
+/** Baja por adelantado los últimos audios para que al tocar "escuchar" suenen de inmediato */
+async function chatPrefetch() {
+  if (prefetching) return;
+  prefetching = true;
+  const C = ui.chat;
+  try {
+    for (const m of C.msgs.filter((x) => x.tipo === 'voz' && !C.audio[x.id]).slice(-3)) {
+      if (ui.view !== 'chat' || C !== ui.chat) break;
+      try {
+        const r = await chatRpc('audio', { p_id: m.id }, { timeout: 30000 });
+        chatGuardarAudio(m.id, `data:${r.mime};base64,${r.audio}`);
+      } catch (e) { if (!e || e.code !== 'mensaje_no_existe') break; }
+    }
+  } finally { prefetching = false; }
+}
+const vplaying = (id) => ui.chat.playing === id && !!audioEl && !audioEl.paused;
+const vplayHtml = (id) => (ui.chat.bajando === id ? '<span class="vload">…</span>' : vplaying(id) ? I('pause') : I('play', 'fill'));
+const vplayLabel = (id) => (vplaying(id) ? 'Pausar nota de voz' : 'Escuchar nota de voz');
+/** Actualiza solo la burbuja de una nota de voz (sin redibujar toda la lista) */
+function chatDrawVoice(id) {
+  const el = document.querySelector(`[data-voice="${id}"]`);
+  if (!el) return;
+  const C = ui.chat, btn = $('.vplay', el), bar = $('.vbar i', el);
+  btn.innerHTML = vplayHtml(id);
+  btn.setAttribute('aria-label', vplayLabel(id));
+  bar.style.width = `${C.playing === id ? C.playPct : 0}%`;
+}
+function chatStopPlay() {
+  if (audioEl) { try { audioEl.pause(); } catch (e) { /* ya está detenido */ } audioEl = null; }
+  const C = ui.chat, id = C.playing;
+  C.playing = ''; C.playPct = 0;
+  if (id) chatDrawVoice(id);
+}
+async function chatPlay(id) {
+  const C = ui.chat;
+  if (C.playing === id && audioEl) {   // el mismo audio: pausar o seguir
+    if (audioEl.paused) audioEl.play().catch(() => {}); else audioEl.pause();
+    chatDrawVoice(id);
+    return;
+  }
+  chatStopPlay();
+  let src = C.audio[id];
+  if (!src) {
+    C.bajando = id; chatDrawVoice(id);
+    try {
+      const r = await chatRpc('audio', { p_id: id }, { timeout: 30000 });
+      src = `data:${r.mime};base64,${r.audio}`;
+      chatGuardarAudio(id, src);
+    } catch (e) { toast(NUBE.errMsg(e), 'err'); return; }
+    finally { C.bajando = ''; chatDrawVoice(id); }
+  }
+  if (C !== ui.chat) return;
+  const msg = C.msgs.find((m) => m.id === id), total = (msg && msg.dur) || 0;
+  const a = new Audio(src);
+  audioEl = a; C.playing = id; C.playPct = 0;
+  a.addEventListener('timeupdate', () => {
+    if (audioEl !== a) return;
+    C.playPct = total ? Math.min(100, (a.currentTime / total) * 100) : 0;   // los audios grabados no traen su duración
+    const bar = document.querySelector(`[data-voice="${id}"] .vbar i`);
+    if (bar) bar.style.width = `${C.playPct}%`;
+  });
+  a.addEventListener('pause', () => { if (audioEl === a) chatDrawVoice(id); });
+  a.addEventListener('play', () => { if (audioEl === a) chatDrawVoice(id); });
+  a.addEventListener('ended', () => { if (audioEl === a) chatStopPlay(); });
+  a.addEventListener('error', () => { if (audioEl === a) { chatStopPlay(); toast('No se pudo reproducir esta nota de voz.', 'err'); } });
+  try { await a.play(); }
+  catch (e) { if (audioEl === a) { chatStopPlay(); toast('Toca otra vez para escuchar la nota de voz.', 'err'); } }
+  chatDrawVoice(id);
+}
+
+/* ── Grabar una nota de voz ── */
+let recorder = null, recStream = null, recChunks = [], recTimer = null, micBusy = false;
+function recMime() {
+  if (typeof MediaRecorder === 'undefined') return null;
+  for (const t of ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']) {
+    try { if (MediaRecorder.isTypeSupported(t)) return t; } catch (e) { /* probar el siguiente */ }
+  }
+  return '';   // que el teléfono elija
+}
+const micMsg = (e) => {
+  const n = e && e.name;
+  if (n === 'NotAllowedError' || n === 'SecurityError') return 'Para grabar necesitas permitir el micrófono: Ajustes del teléfono → Apps → VidaMayor → Permisos.';
+  if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'Este teléfono no tiene micrófono disponible.';
+  if (n === 'NotReadableError') return 'El micrófono lo está usando otra aplicación.';
+  return 'No se pudo usar el micrófono.';
+};
+const blobToB64 = (blob) => new Promise((ok, no) => {
+  const fr = new FileReader();
+  fr.onload = () => ok(String(fr.result).split(',')[1] || '');
+  fr.onerror = () => no(fr.error);
+  fr.readAsDataURL(blob);
+});
+/** Detiene el micrófono y devuelve lo grabado */
+function recStop() {
+  return new Promise((resolve) => {
+    clearInterval(recTimer);
+    const secs = Math.max(1, Math.min(REC_MAX, Math.round((Date.now() - ui.chat.recStart) / 1000)));
+    const r = recorder;
+    const fin = () => {
+      try { if (recStream) recStream.getTracks().forEach((t) => t.stop()); } catch (e) { /* ya detenido */ }
+      const blob = new Blob(recChunks, { type: (r && r.mimeType) || 'audio/webm' });
+      recorder = null; recStream = null; recChunks = [];
+      resolve({ blob, secs });
+    };
+    if (!r || r.state === 'inactive') return fin();
+    r.onstop = fin;
+    try { r.stop(); } catch (e) { fin(); }
+  });
+}
+async function chatGrabar() {
+  const C = ui.chat;
+  if (C.rec !== 'idle' || micBusy) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+    toast('Este teléfono no permite grabar notas de voz.', 'err'); return;
+  }
+  micBusy = true;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) { micBusy = false; toast(micMsg(e), 'err'); return; }
+  micBusy = false;
+  if (C !== ui.chat || ui.view !== 'chat') { stream.getTracks().forEach((t) => t.stop()); return; }
+  const mime = recMime();
+  try { recorder = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 24000 }); }
+  catch (e) { stream.getTracks().forEach((t) => t.stop()); toast('No se pudo iniciar la grabación.', 'err'); return; }
+  chatStopPlay();
+  recStream = stream; recChunks = [];
+  recorder.ondataavailable = (ev) => { if (ev.data && ev.data.size) recChunks.push(ev.data); };
+  recorder.start(250);
+  C.rec = 'rec'; C.recStart = Date.now(); C.recSecs = 0; C.pending = null;
+  chatDrawComposer();
+  try { if (navigator.vibrate) navigator.vibrate(40); } catch (e) { /* sin vibración */ }
+  clearInterval(recTimer);
+  recTimer = setInterval(() => {
+    C.recSecs = Math.floor((Date.now() - C.recStart) / 1000);
+    const el = $('#chat-rec-time');
+    if (el) el.textContent = fmtSecs(Math.min(C.recSecs, REC_MAX));
+    if (C.recSecs >= REC_MAX && C.rec === 'rec') { toast('Llegaste al máximo de 1 minuto.'); chatEnviarVoz(); }
+  }, 250);
+}
+async function chatCancelarGrab() {
+  const C = ui.chat;
+  if (C.rec !== 'rec') return;
+  C.rec = 'idle';
+  await recStop();
+  chatDrawComposer();
+}
+function chatDescartar() { const C = ui.chat; C.pending = null; C.rec = 'idle'; chatDrawComposer(); }
+async function chatEnviarVoz() {
+  const C = ui.chat;
+  if (C.rec === 'rec') {
+    C.rec = 'sending'; chatDrawComposer();
+    C.pending = await recStop();
+  } else if (C.rec === 'ready') { C.rec = 'sending'; chatDrawComposer(); }
+  else return;
+  const { blob, secs } = C.pending || {};
+  try {
+    if (!blob || blob.size < 200) throw Object.assign(new Error('vacio'), { code: 'grabacion_vacia' });
+    const b64 = await blobToB64(blob);
+    if (b64.length > 390000) throw Object.assign(new Error('grande'), { code: 'audio_grande' });
+    const mime = (blob.type || 'audio/webm').split(';')[0];
+    const r = await chatRpc('enviar', { p_tipo: 'voz', p_audio: b64, p_mime: mime, p_dur: secs }, { timeout: 40000 });
+    if (C !== ui.chat) return;
+    if (r && r.id) chatGuardarAudio(r.id, `data:${mime};base64,${b64}`);
+    C.pending = null; C.rec = 'idle'; C.stick = true;
+    chatDrawComposer();
+    await chatPoll({ force: true });
+  } catch (e) {
+    if (C !== ui.chat) return;
+    if (e && (e.code === 'grabacion_vacia' || e.code === 'audio_grande' || e.code === 'audio_invalido')) {
+      C.pending = null; C.rec = 'idle';
+      toast(e.code === 'grabacion_vacia' ? 'No se grabó nada. Inténtalo otra vez.' : NUBE.errMsg(e), 'err');
+    } else { C.rec = 'ready'; toast(NUBE.errMsg(e), 'err'); }   // se conserva la nota para reintentar
+    chatDrawComposer();
+  }
+}
+
+/* ── Enviar texto ── */
+async function chatEnviarTexto() {
+  const C = ui.chat, texto = C.draft.trim();
+  if (!texto || C.busy) return;
+  C.busy = true;
+  try {
+    await chatRpc('enviar', { p_tipo: 'texto', p_texto: texto });
+    if (C !== ui.chat) return;
+    C.draft = ''; C.stick = true;
+    const inp = $('#chat-input'), s = $('.chat-send'), m = $('.chat-mic');
+    if (inp) inp.value = '';
+    if (s) s.hidden = true;
+    if (m) m.hidden = false;
+    await chatPoll({ force: true });
+  } catch (e) { toast(NUBE.errMsg(e), 'err'); }
+  finally { C.busy = false; }
+}
+
+/** Al salir de la pantalla: calla el audio y descarta una grabación a medias */
+function chatParar() {
+  const C = ui.chat;
+  if (!C) return;
+  chatStopPlay();
+  if (C.rec === 'rec') { C.rec = 'idle'; C.pending = null; recStop(); }
+  else if (C.rec === 'ready') { C.rec = 'idle'; C.pending = null; }
+}
+function abrirChat() {
+  ui.chat.stick = true;
+  go('chat');
+  chatPoll({ force: true });
+}
+
+/* ── Dibujo del chat ── */
+const chatDia = (ds) => (ds === dstr(addDays(new Date(), -1)) ? 'Ayer' : dayLabel(ds));
+function chatBurbuja(m, d) {
+  const mio = chatMio(m);
+  const hora = Number.isNaN(d.getTime()) ? '' : t12(hhmm(d));
+  const cuerpo = m.tipo === 'voz'
+    ? `<div class="voice" data-voice="${esc(m.id)}"><button class="vplay" data-act="chatPlay" data-id="${esc(m.id)}" aria-label="${vplayLabel(m.id)}">${vplayHtml(m.id)}</button><div class="vbar"><i style="width:${ui.chat.playing === m.id ? ui.chat.playPct : 0}%"></i></div><span class="vdur">${fmtSecs(m.dur || 0)}</span></div>`
+    : `<div class="b-text">${esc(m.texto)}</div>`;
+  return `<div class="bubble ${mio ? 'mine' : 'theirs'}">${mio ? '' : `<div class="b-name">${esc(m.nombre)}</div>`}${cuerpo}<div class="b-time">${esc(hora)}</div></div>`;
+}
+function chatListHtml() {
+  const C = ui.chat;
+  const sinFamilia = esAdulto() && !ui.nube.miembros.some((m) => m.autorizado);
+  const nota = sinFamilia
+    ? `<div class="banner" style="background:var(--warn-l);color:var(--warn-ink)">${I('info')}<div>Todavía no tienes familiares autorizados. Autoriza a alguien en Mi perfil → Familia conectada para chatear.</div></div>` : '';
+  if (!C.msgs.length) {
+    const txt = C.err || (C.loaded ? 'Todavía no hay mensajes. Escribe el primero o graba una nota de voz.' : 'Cargando mensajes…');
+    return `${nota}<div class="empty">${I('msg')}<p>${esc(txt)}</p></div>`;
+  }
+  let dia = '', out = nota;
+  for (const m of C.msgs) {
+    const d = new Date(m.creada), ds = Number.isNaN(d.getTime()) ? dia : dstr(d);
+    if (ds !== dia) { dia = ds; out += `<div class="chat-day">${esc(chatDia(ds))}</div>`; }
+    out += chatBurbuja(m, d);
+  }
+  if (C.err) out += `<p class="small chat-err" role="alert">${esc(C.err)}</p>`;
+  return out;
+}
+function chatComposerHtml() {
+  const C = ui.chat;
+  if (C.rec === 'rec') {
+    return `<div class="chat-rec"><div class="rec-info"><span class="rec-dot" aria-hidden="true"></span><span class="rec-title">Grabando…</span><span class="rec-time" id="chat-rec-time" role="timer">${fmtSecs(Math.min(C.recSecs, REC_MAX))}</span></div>
+      <div class="rec-btns"><button class="btn btn-soft" data-act="chatCancelarGrab">Cancelar</button><button class="btn btn-primary" data-act="chatEnviarVoz">${I('send')} Enviar</button></div></div>`;
+  }
+  if (C.rec === 'sending') return `<div class="chat-rec"><div class="grow"><div class="rec-title">Enviando nota de voz…</div></div></div>`;
+  if (C.rec === 'ready') {
+    return `<div class="chat-rec"><div class="rec-info"><div class="grow"><div class="rec-title">Nota de voz lista (${fmtSecs(C.pending ? C.pending.secs : 0)})</div><div class="small muted">No se pudo enviar. Revisa tu internet.</div></div></div>
+      <div class="rec-btns"><button class="btn btn-soft" data-act="chatDescartar">Descartar</button><button class="btn btn-primary" data-act="chatEnviarVoz">Reintentar</button></div></div>`;
+  }
+  const hay = !!C.draft.trim();
+  return `<div class="chat-row"><input id="chat-input" class="input" type="text" maxlength="1000" enterkeyhint="send" autocomplete="off" placeholder="Escribe un mensaje" aria-label="Escribe un mensaje" value="${esc(C.draft)}">
+      <button class="chat-send" data-act="chatEnviar" aria-label="Enviar mensaje" ${hay ? '' : 'hidden'}>${I('send')}</button>
+      <button class="chat-mic" data-act="chatGrabar" aria-label="Grabar nota de voz" ${hay ? 'hidden' : ''}>${I('mic')}</button></div>
+    ${C.msgs.length ? '' : '<p class="small muted chat-hint">Toca el micrófono para grabar una nota de voz (hasta 1 minuto).</p>'}`;
+}
+function chatDrawComposer() { const c = $('#chat-composer'); if (c) c.innerHTML = chatComposerHtml(); }
+/** Redibuja solo la lista de mensajes; baja al final si estabas abajo o si pediste bajar */
+function chatDrawList() {
+  const l = $('#chat-list');
+  if (!l) return;
+  const abajo = ui.chat.stick || l.scrollHeight - l.scrollTop - l.clientHeight < 90, top = l.scrollTop;
+  ui.chat.stick = false;
+  l.innerHTML = chatListHtml();
+  l.scrollTop = abajo ? l.scrollHeight : top;
+}
+/** Después de dibujar la pantalla completa: posición de la lista y mensajes leídos */
+function chatAfterRender(top, estabaAbajo, keepScroll) {
+  const l = $('#chat-list');
+  if (!l) return;
+  l.scrollTop = (!keepScroll || ui.chat.stick || estabaAbajo) ? l.scrollHeight : top;
+  ui.chat.stick = false;
+  chatMarcarVisto();
+  chatPrefetch();
+}
+/** Botón para entrar al chat (Inicio, Familia y panel familiar) */
+function chatEntry() {
+  if (!chatDisponible()) return '';
+  const n = chatSinLeer();
+  return `<button class="chat-entry" data-act="abrirChat">${I('msg')}<div class="grow"><div class="item-title">Mensajes</div><div class="item-sub chat-entry-sub">${chatEntrySub(n)}</div></div><span class="badge chat-badge" ${n ? '' : 'hidden'}>${n}</span>${I('chevR')}</button>`;
+}
 /* ── Tarjeta "Familia conectada" (en Mi perfil) ── */
 function nubeCard() {
   const head = `<div class="card-head">${I('users')}Familia conectada</div>`;
@@ -697,6 +1105,14 @@ function nubeEstadoAlerta(a) {
    ═══════════════════════════════════════════════════════════ */
 const VIEWS = {};
 
+VIEWS.chat = () => {
+  return `${topbar({ back: true, title: 'Mensajes', actions: false })}
+    <div class="chat-list" id="chat-list">${chatListHtml()}</div>
+    <div class="chat-composer" id="chat-composer">${chatComposerHtml()}</div>`;
+};
+
+
+
 /* ── Inicio ── */
 VIEWS.inicio = () => {
   const now = new Date(), h = now.getHours();
@@ -713,6 +1129,7 @@ VIEWS.inicio = () => {
     ${cardNextAppt(now)}
     ${cardDayStatus(now)}
     ${quickTiles()}
+    ${chatEntry()}
     <button class="sos-wide" data-act="askSOS">${I('alert')} EMERGENCIA</button>
   </div>`;
 };
@@ -876,6 +1293,7 @@ VIEWS.familia = () => {
   return `${topbar()}<div class="page">
     <h1 class="page-title">Familia</h1>
     <p class="lead">Tus contactos de emergencia: les llamas con un toque y reciben tus avisos.</p>
+    ${chatEntry()}
     ${cards}
     <button class="btn btn-primary btn-block btn-xl fab-row" data-act="addFamily">${I('plus')} Agregar familiar</button>
     ${conectar}
@@ -1136,7 +1554,8 @@ function remoteFamilyView() {
   const src = { name: nombre, stale, meds: r.meds || null, appts: r.appts || null, location: d.ubicacion || null, alert: act ? { at: act.creada } : null };
   const call = !act && r.telefono ? `<a class="btn btn-primary btn-block btn-xl" style="margin-top:1rem" href="tel:${digits(r.telefono)}">${I('phone')} Llamar a ${esc(first)}</a>` : '';
   return `${head}<div class="page">${alertBox}${banners}
-    <section class="card"><div class="row" style="margin-bottom:.4rem">${avatar(nombre, '', 'lg')}<div><div class="big-line" style="font-size:1.3rem">${esc(first)} — Estado actual</div><div class="item-sub">${cap(fmt(now, { weekday: 'long', day: 'numeric', month: 'long' }))} · actualizado ${esc(visto)}</div></div></div>${rowsHtml(rowsFrom(src, now))}</section>
+    ${chatEntry()}
+    <section class="card" style="margin-top:.9rem"><div class="row" style="margin-bottom:.4rem">${avatar(nombre, '', 'lg')}<div><div class="big-line" style="font-size:1.3rem">${esc(first)} — Estado actual</div><div class="item-sub">${cap(fmt(now, { weekday: 'long', day: 'numeric', month: 'long' }))} · actualizado ${esc(visto)}</div></div></div>${rowsHtml(rowsFrom(src, now))}</section>
     ${call}
   </div>`;
 }
@@ -1221,7 +1640,7 @@ function takeMed(id) {
 }
 function logout() { state.loggedOut = true; save(); showWelcome(); }
 async function resetAll() {
-  const ok = await ask({ title: '¿Borrar todos tus datos?', text: `Se eliminarán medicinas, citas, familiares y alertas de este teléfono${esAdulto() || esFamiliar() ? ' y también la conexión con tu familia en la nube' : ''}. No se puede deshacer.`, ok: 'Sí, borrar todo', danger: true });
+  const ok = await ask({ title: '¿Borrar todos tus datos?', text: `Se eliminarán medicinas, citas, familiares y alertas de este teléfono${esAdulto() || esFamiliar() ? ' y también la conexión con tu familia y los mensajes en la nube' : ''}. No se puede deshacer.`, ok: 'Sí, borrar todo', danger: true });
   if (!ok) return;
   try {
     if (esAdulto()) await NUBE.rpc('adulto_borrar_familia', { p_llave: state.nube.llave });
@@ -1265,6 +1684,13 @@ const ACTIONS = {
   crearFamilia: () => crearFamilia(),
   joinFamily: () => joinSheet(),
   reintentarNube: () => nubeKick(),
+  abrirChat: () => abrirChat(),
+  chatEnviar: () => chatEnviarTexto(),
+  chatGrabar: () => chatGrabar(),
+  chatCancelarGrab: () => chatCancelarGrab(),
+  chatEnviarVoz: () => chatEnviarVoz(),
+  chatDescartar: () => chatDescartar(),
+  chatPlay: (el) => chatPlay(el.dataset.id),
   copiarCodigo: async () => {
     try { await navigator.clipboard.writeText(fmtCodigo(state.nube.codigo)); toast('Código copiado.', 'ok'); }
     catch (e) { toast('No pude copiarlo. Dícelo por mensaje o por teléfono.', 'err'); }
@@ -1283,11 +1709,11 @@ const ACTIONS = {
     catch (e) { toast(NUBE.errMsg(e), 'err'); }
   },
   desconectarNube: async () => {
-    const ok = await ask({ title: '¿Desconectar a tu familia?', text: 'Se borran de la nube tu resumen, tu ubicación y las conexiones. Tus datos en este teléfono se quedan.', ok: 'Sí, desconectar', danger: true });
+    const ok = await ask({ title: '¿Desconectar a tu familia?', text: 'Se borran de la nube tu resumen, tu ubicación, los mensajes y las conexiones. Tus datos en este teléfono se quedan.', ok: 'Sí, desconectar', danger: true });
     if (!ok) return;
     try { await NUBE.rpc('adulto_borrar_familia', { p_llave: state.nube.llave }); }
     catch (e) { if (e && e.code !== 'llave_invalida') { toast(NUBE.errMsg(e), 'err'); return; } }
-    state.nube = defaults().nube; persist(); ui.nube.miembros = []; ui.nube.alertas = []; ui.nube.err = '';
+    state.nube = defaults().nube; persist(); ui.nube.miembros = []; ui.nube.alertas = []; ui.nube.err = ''; chatReset();
     render(true); toast('Tu familia se desconectó y se borraron tus datos de la nube.', 'ok');
   },
   familiarSalir: async () => {
@@ -1314,6 +1740,17 @@ document.addEventListener('click', (e) => {
   if (!el || el.getAttribute('aria-disabled') === 'true' && el.dataset.act !== 'shareLocationNow') return;
   const fn = ACTIONS[el.dataset.act];
   if (fn) { e.preventDefault(); fn(el, e); }
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'chat-input') return;
+  ui.chat.draft = e.target.value;
+  const hay = !!e.target.value.trim(), s = $('.chat-send'), m = $('.chat-mic');
+  if (s) s.hidden = !hay;
+  if (m) m.hidden = hay;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.target.id === 'chat-input' && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); chatEnviarTexto(); }
 });
 
 document.addEventListener('change', async (e) => {
@@ -1358,23 +1795,31 @@ async function onSwitch(el) {
    11. Navegación, dibujo y arranque
    ═══════════════════════════════════════════════════════════ */
 function go(view) {
+  if (ui.view === 'chat' && view !== 'chat') chatParar();
   if (ui.view !== view && MAIN.includes(ui.view)) ui.prev = ui.view;
   ui.view = view;
   render(false);
 }
 function render(keepScroll = false) {
+  if (ui.view === 'chat' && !esAdulto() && !esFamiliar()) ui.view = 'inicio';   // el chat solo existe con familia conectada
   const box = $('#view');
   const top = keepScroll ? box.scrollTop : 0;
   const family = ui.mode === 'familiar';
-  $('#tabbar').hidden = family;
-  if (!family) renderTabbar();
-  const fn = VIEWS[family ? 'familiar' : ui.view] || VIEWS.inicio;
+  const oldList = $('#chat-list');   // el chat se desplaza por dentro: se recuerda dónde iba
+  const listTop = oldList ? oldList.scrollTop : 0;
+  const listAbajo = oldList ? oldList.scrollHeight - oldList.scrollTop - oldList.clientHeight < 90 : true;
+  $('#tabbar').hidden = family || ui.view === 'chat';
+  if (!family && ui.view !== 'chat') renderTabbar();
+  const fn = VIEWS[ui.view === 'chat' ? 'chat' : family ? 'familiar' : ui.view] || VIEWS.inicio;
   box.innerHTML = fn();
+  box.classList.toggle('is-chat', ui.view === 'chat');
+  document.body.classList.toggle('en-chat', ui.view === 'chat');
   box.scrollTop = top;
+  if (ui.view === 'chat') chatAfterRender(listTop, listAbajo, keepScroll);
 }
 /** Redibuja lo que cambia con la hora, sin molestar si estás escribiendo */
 function refreshLive() {
-  if (sheet.open || $('#app').hidden) return;
+  if (sheet.open || $('#app').hidden || ui.view === 'chat') return;
   const a = document.activeElement;
   if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
   if (['inicio', 'medicinas', 'avisos', 'emergencia', 'ubicacion'].includes(ui.view) || ui.mode === 'familiar') render(true);
@@ -1423,6 +1868,7 @@ function setupNative() {
   if (App && App.addListener) {
     App.addListener('backButton', () => {
       if (sheet.open) closeSheet();
+      else if (ui.view === 'chat') go(ui.prev || 'inicio');
       else if (esFamiliar()) { if (App.exitApp) App.exitApp(); }
       else if (ui.view !== 'inicio') go(MAIN.includes(ui.view) ? 'inicio' : (ui.prev || 'inicio'));
       else if (App.exitApp) App.exitApp();
@@ -1442,7 +1888,7 @@ function boot() {
   setupNative();
   setInterval(() => { if (!document.hidden) { tickDue(); refreshLive(); } }, 30000);
   setInterval(nubeTick, 6000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { tickDue(); refreshLive(); scheduleReminders(); nubeKick(); } });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) chatParar(); else { tickDue(); refreshLive(); scheduleReminders(); nubeKick(); } });
 }
 boot();
 })();

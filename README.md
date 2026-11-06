@@ -19,6 +19,7 @@ Está hecha con **HTML, CSS y JavaScript** y se empaqueta como **APK** con [Capa
 | **Mi perfil** | Datos, médico de confianza, información médica, **privacidad y permisos**, notificaciones y tamaño de letra |
 | **Avisos** | Lista de lo pendiente: *"Hora de tomar medicamento"*, *"No se ha confirmado tu medicamento de las 10:00 a. m."* |
 | **Familia conectada** | Un código une el celular de la persona con el de su familiar, que lo escribe en su propio teléfono con *Soy familiar*. La persona decide a quién autoriza. |
+| **Mensajes** | Chat de la familia dentro de la app: textos y **notas de voz** (hasta 1 minuto) entre la persona y sus familiares autorizados. Aparece en *Inicio* y *Familia*, con un globito cuando hay mensajes nuevos. Requiere la nube |
 | **Panel familiar** | Lo que ve el familiar en su celular: medicinas confirmadas/pendientes, citas, ubicación y emergencias (según lo que la persona permita). Requiere la nube: ver [GUIA-SUPABASE.md](GUIA-SUPABASE.md) |
 
 Diseño *Soft & Friendly*: letra grande (con 3 tamaños), alto contraste, botones amplios y pocos colores.
@@ -84,6 +85,14 @@ Para abrirlo en Android Studio y probarlo en un emulador: `npm run android:open`
 | `Failed to install the following SDK components` o licencias | Abre Android Studio una vez y acepta las licencias del SDK (en GitHub Actions ya se aceptan solas). |
 | Los avisos llegan con minutos de retraso | Ajustes del teléfono → Apps → VidaMayor → *Alarmas y recordatorios* → permitir. |
 
+### Vista previa web (para enseñar la app sin instalar nada)
+
+La misma app se publica como página web en GitHub Pages con el flujo `.github/workflows/pages.yml`. Sirve para un código QR que se abra con solo escanearlo, también en iPhone. En la página los avisos solo llegan con la app abierta; para recibirlos siempre hay que instalar el APK.
+
+1. En GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+2. Cada vez que cambia algo dentro de `www/` (o con **Actions → Publicar vista previa web → Run workflow**), la página se actualiza sola en 1 o 2 minutos.
+3. Queda en `https://TU-USUARIO.github.io/VidaMayor/`.
+
 ---
 
 ## 4. Cómo funciona
@@ -98,14 +107,17 @@ Para abrirlo en Android Studio y probarlo en un emulador: `npm run android:open`
 - El familiar ve, casi al instante, las medicinas confirmadas, las citas del día, la ubicación (si se comparte) y las alertas de emergencia.
 - El filtro de privacidad se aplica **en el servidor**: lo que la persona no comparte nunca sale de la base de datos.
 - Si no hay internet al pedir ayuda, la alerta espera y se envía sola cuando vuelve la conexión.
+- **Mensajes:** un chat compartido entre la persona y sus familiares autorizados. Para una nota de voz se toca el micrófono, se habla y se pulsa *Enviar* (o *Cancelar*). Se actualiza cada ~6 s con el chat abierto; si no hay internet, el texto se queda escrito y la nota de voz se conserva para *Reintentar*. Solo lo ven los autorizados, y se conservan los últimos 200 mensajes (máximo 30 días).
 
 **Todavía no incluye**
-- Avisar al familiar cuando **su app está cerrada** (necesita notificaciones *push*): hoy se entera mientras la app está abierta o recién usada.
+- Avisar al familiar cuando **su app está cerrada** (necesita notificaciones *push*): hoy se entera mientras la app está abierta o recién usada. Lo mismo pasa con los **mensajes nuevos**.
+- Chats privados de dos personas, enviar fotos, ni llamadas de voz o video (el chat es de texto y notas de voz).
+- Cifrado de punta a punta en los mensajes.
 - Cuentas con correo o teléfono: hoy la conexión es por código y autorización.
 
 ### Antes de publicarla en una tienda
 1. Notificaciones *push* (Firebase Cloud Messaging) para avisar al familiar aunque su app esté cerrada.
-2. Cuentas reales con Supabase Auth y límites contra abusos.
+2. Cuentas reales con Supabase Auth y límites contra abusos (hoy el chat solo limita a 30 mensajes por minuto por familia).
 3. Política de privacidad y consentimiento: son datos de salud y ubicación.
 
 ---
@@ -117,6 +129,7 @@ Para abrirlo en Android Studio y probarlo en un emulador: `npm run android:open`
 | Notificaciones | Avisos de medicinas y citas |
 | Alarmas exactas | Que el aviso llegue justo a la hora |
 | Ubicación | Compartir ubicación y adjuntarla a la emergencia (solo si la activas) |
+| Micrófono | Grabar notas de voz para el chat (solo mientras grabas; se pide la primera vez que tocas el micrófono) |
 | Iniciar con el teléfono | Volver a programar los avisos después de reiniciar |
 
 > Nota: `USE_EXACT_ALARM` está pensado para apps de alarmas/calendario. Para un APK escolar no hay problema; si algún día la publicas en Google Play, tendrás que justificarlo o quitarlo de `scripts/patch-android.mjs`.
@@ -143,6 +156,7 @@ vidamayor/
 │   ├── make-icons.py        Crea el ícono y la pantalla de inicio a partir de design/
 │   └── serve.mjs            Servidor para verla en el navegador
 ├── .github/workflows/build-apk.yml   Compila el APK en GitHub
+├── .github/workflows/pages.yml       Publica la vista previa web en GitHub Pages
 ├── capacitor.config.json    ID de la app (mx.vidamayor.app) y ajustes de plugins
 └── package.json
 ```

@@ -19,6 +19,14 @@
     token_invalido: 'Esta conexión ya no es válida.',
     llave_invalida: 'Esta conexión ya no es válida.',
     resumen_grande: 'Hay demasiada información para sincronizar.',
+    // Chat (texto y notas de voz)
+    mensaje_vacio: 'Escribe un mensaje o graba una nota de voz.',
+    mensaje_invalido: 'No se pudo enviar ese mensaje.',
+    audio_grande: 'La nota de voz es demasiado grande. Graba una más corta.',
+    audio_invalido: 'No se pudo enviar esa nota de voz.',
+    demasiados_mensajes: 'Estás enviando muy rápido. Espera un momento.',
+    mensaje_no_existe: 'Esa nota de voz ya no está disponible.',
+    sin_permiso: 'Todavía no tienes permiso para usar los mensajes.',
   };
 
   class NubeError extends Error {
@@ -43,6 +51,8 @@
     try { body = await res.json(); } catch (e) { /* sin cuerpo */ }
     if (!res.ok) {
       const msg = body && typeof body.message === 'string' ? body.message : '';
+      // La función no existe: falta ejecutar la versión nueva de supabase/esquema.sql en Supabase
+      if (res.status === 404 && body && body.code === 'PGRST202') throw new NubeError('funcion_falta', 404);
       throw new NubeError(MENSAJES[msg] ? msg : (res.status === 401 || res.status === 403 ? 'clave' : 'servidor'), res.status);
     }
     return body;
@@ -55,6 +65,7 @@
     if (c === 'sin_configurar') return 'La conexión con la nube aún no está configurada en esta app.';
     if (c === 'red' || c === 'tiempo') return 'No hay conexión con internet. Inténtalo de nuevo en un momento.';
     if (c === 'clave') return 'La clave de la nube no es correcta (revisa nube-config.js).';
+    if (c === 'funcion_falta') return 'Los mensajes aún no están activados en la nube: falta actualizar la base de datos (GUIA-SUPABASE.md).';
     return 'No se pudo conectar con la nube. Inténtalo de nuevo.';
   }
 
