@@ -1,0 +1,57 @@
+name: Compilar APK
+
+# Se ejecuta cada vez que subes cambios a la rama principal,
+# o a mano desde la pestaña Actions > "Compilar APK" > Run workflow.
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Node 22 (lo pide Capacitor 8)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Java 21 (lo pide Capacitor 8)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # El runner ya trae el SDK de Android. Solo aceptamos licencias y
+      # nos aseguramos de tener la plataforma 36 que pide Capacitor 8.
+      # (Se quitó android-actions/setup-android@v3: fallaba con
+      #  "Failed to find package 'tools'".)
+      - name: SDK de Android (licencias y plataforma 36)
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Crear el proyecto Android (permisos, íconos y pantalla de inicio)
+        run: npm run android:add
+
+      - name: Copiar la app web al proyecto Android
+        run: npm run android:sync
+
+      - name: Compilar el APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Guardar el APK para descargarlo
+        uses: actions/upload-artifact@v4
+        with:
+          name: VidaMayor-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
