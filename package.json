@@ -1,0 +1,28 @@
+{
+  "name": "vidamayor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VidaMayor: app Android (Capacitor) para acompañar a adultos mayores. Proyecto escolar.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "android:add": "cap add android && node scripts/patch-android.mjs && capacitor-assets generate --android",
+    "android:sync": "cap sync android",
+    "android:open": "cap open android",
+    "apk": "npm run android:sync && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/geolocation": "^8.0.0",
+    "@capacitor/local-notifications": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.0.0"
+  }
+}

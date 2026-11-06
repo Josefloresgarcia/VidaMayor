@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="es-MX" data-size="normal">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#FBF6EE">
+  <title>VidaMayor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- App principal (se dibuja desde script.js) -->
+  <div id="app" class="app" hidden>
+    <div id="view" class="view" tabindex="-1"></div>
+    <nav id="tabbar" class="tabbar" aria-label="Menú principal"></nav>
+  </div>
+
+  <!-- Pantalla de bienvenida / entrada -->
+  <div id="welcome" class="welcome" hidden></div>
+
+  <!-- Mensajes breves -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- Hoja inferior para formularios y confirmaciones -->
+  <dialog id="sheet" class="sheet" aria-labelledby="sheet-title"></dialog>
+
+  <noscript>VidaMayor necesita JavaScript para funcionar.</noscript>
+  <script src="nube-config.js"></script>
+  <script src="nube.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

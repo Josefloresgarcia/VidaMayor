@@ -1,0 +1,16 @@
+{
+  "appId": "mx.vidamayor.app",
+  "appName": "VidaMayor",
+  "webDir": "www",
+  "backgroundColor": "#FBF6EE",
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_vidamayor",
+      "iconColor": "#2E7D74"
+    },
+    "SystemBars": {
+      "insetsHandling": "css",
+      "style": "LIGHT"
+    }
+  }
+}
